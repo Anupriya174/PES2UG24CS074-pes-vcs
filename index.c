@@ -139,7 +139,37 @@ int index_status(const Index *index) {
 //   - hex_to_hash                      : converting the parsed string to ObjectID
 //
 // Returns 0 on success, -1 on error.
+int index_load(Index *index) {
+    FILE *f = fopen(".pes/index", "r");
+    if (!f) {
+        index->count = 0;
+        return 0;
+    }
 
+    index->count = 0;
+
+    while (1) {
+        IndexEntry e;
+        char hash_hex[65];
+
+        int ret = fscanf(f, "%o %64s %ld %u %s",
+                         &e.mode,
+                         hash_hex,
+                         &e.mtime_sec,
+                         &e.size,
+                         e.path);
+
+        if (ret != 5)
+            break;
+
+        hex_to_hash(hash_hex, &e.hash);
+
+        index->entries[index->count++] = e;
+    }
+
+    fclose(f);
+    return 0;
+}
 
 
 // Save the index to .pes/index atomically.
@@ -152,6 +182,51 @@ int index_status(const Index *index) {
 //   - rename                           : atomically moving the temp file over the old index
 //
 // Returns 0 on success, -1 on error.
+
+int cmp_entries(const void *a, const void *b) {
+    const IndexEntry *ea = a;
+    const IndexEntry *eb = b;
+    return strcmp(ea->path, eb->path);
+}
+
+
+int index_save(const Index *index) {
+    FILE *f = fopen(".pes/index.tmp", "w");
+    if (!f) {
+        perror("fopen");
+        return -1;
+    }
+
+    IndexEntry temp[index->count];
+    for (int i = 0; i < index->count; i++) {
+        temp[i] = index->entries[i];
+    }
+
+    qsort(temp, index->count, sizeof(IndexEntry), compare_index_entries);
+
+    for (int i = 0; i < index->count; i++) {
+        char hash_hex[65];
+        hash_to_hex(&temp[i].hash, hash_hex);
+
+        fprintf(f, "%o %s %ld %u %s\n",
+                temp[i].mode,
+                hash_hex,
+                temp[i].mtime_sec,
+                temp[i].size,
+                temp[i].path);
+    }
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+
+    if (rename(".pes/index.tmp", ".pes/index") != 0) {
+        perror("rename");
+        return -1;
+    }
+
+    return 0;
+}
 
 // Stage a file for the next commit.
 //
