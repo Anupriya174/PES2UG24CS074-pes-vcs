@@ -93,6 +93,78 @@ int object_exists(const ObjectID *id) {
 
 //
 // Returns 0 on success, -1 on error.
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
+    // TODO: Implement
+    // 1. Prepare the header
+    char header[64];
+    const char *type_str = (type == OBJ_BLOB) ? "blob" : 
+                           (type == OBJ_TREE) ? "tree" : "commit";
+    
+    // Create the header string (e.g., "blob 1024")
+    // We use +1 to include the null terminator in the length calculation
+    int header_len = sprintf(header, "%s %zu", type_str, len) + 1;
+
+    // 2. Combine Header + Data into one full buffer for hashing/writing
+    size_t full_len = header_len + len;
+    unsigned char *full_data = malloc(full_len);
+    if (!full_data) return -1;
+
+    memcpy(full_data, header, header_len);
+    memcpy(full_data + header_len, data, len);
+   // 3. Compute SHA-256 hash of the FULL object
+    compute_hash(full_data, full_len, id_out);
+
+    // 4. Check if object already exists (Deduplication)
+    if (object_exists(id_out)) {
+        free(full_data);
+        return 0; // Success! No need to write it again.
+    }
+
+    // 5. Get the path where the object should live
+    char path[512];
+    object_path(id_out, path, sizeof(path));
+
+    // 6. Create the shard directory (e.g., .pes/objects/a1)
+    // We only need the directory part of the path
+    char dir_path[512];
+    snprintf(dir_path, sizeof(dir_path), "%s/%.2s", OBJECTS_DIR, id_out->hash[0] <= 0xf ? "0" : ""); 
+    // Actually, let's use a simpler way since your helper provides hex:
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+    snprintf(dir_path, sizeof(dir_path), "%s/%.2s", OBJECTS_DIR, hex);
+    
+    mkdir(dir_path, 0755);
+    // 7. Write to a temporary file
+    char temp_path[512];
+    snprintf(temp_path, sizeof(temp_path), "%s/temp_XXXXXX", dir_path);
+    int fd = mkstemp(temp_path);
+    if (fd < 0) {
+        free(full_data);
+        return -1;
+    }
+
+    if (write(fd, full_data, full_len) != (ssize_t)full_len) {
+        close(fd);
+        unlink(temp_path);
+        free(full_data);
+        return -1;
+    }
+
+    // 8. Force data to disk and rename
+    fsync(fd);
+    close(fd);
+
+    if (rename(temp_path, path) != 0) {
+        unlink(temp_path);
+        free(full_data);
+        return -1;
+    }
+
+    free(full_data);
+    return 0; // Success!
+}
+
+
 
 // Read an object from the store.
 //
