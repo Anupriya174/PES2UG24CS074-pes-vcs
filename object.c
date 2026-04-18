@@ -95,9 +95,75 @@ int object_exists(const ObjectID *id) {
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
-    return -1;
+    // 1. Prepare the header
+    char header[64];
+    const char *type_str = (type == OBJ_BLOB) ? "blob" : 
+                           (type == OBJ_TREE) ? "tree" : "commit";
+    
+    // Create the header string (e.g., "blob 1024")
+    // We use +1 to include the null terminator in the length calculation
+    int header_len = sprintf(header, "%s %zu", type_str, len) + 1;
+
+    // 2. Combine Header + Data into one full buffer for hashing/writing
+    size_t full_len = header_len + len;
+    unsigned char *full_data = malloc(full_len);
+    if (!full_data) return -1;
+
+    memcpy(full_data, header, header_len);
+    memcpy(full_data + header_len, data, len);
+   // 3. Compute SHA-256 hash of the FULL object
+    compute_hash(full_data, full_len, id_out);
+
+    // 4. Check if object already exists (Deduplication)
+    if (object_exists(id_out)) {
+        free(full_data);
+        return 0; // Success! No need to write it again.
+    }
+
+    // 5. Get the path where the object should live
+    char path[512];
+    object_path(id_out, path, sizeof(path));
+
+    // 6. Create the shard directory (e.g., .pes/objects/a1)
+    // We only need the directory part of the path
+    char dir_path[512];
+    snprintf(dir_path, sizeof(dir_path), "%s/%.2s", OBJECTS_DIR, id_out->hash[0] <= 0xf ? "0" : ""); 
+    // Actually, let's use a simpler way since your helper provides hex:
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+    snprintf(dir_path, sizeof(dir_path), "%s/%.2s", OBJECTS_DIR, hex);
+    
+    mkdir(dir_path, 0755);
+    // 7. Write to a temporary file
+    char temp_path[512];
+    snprintf(temp_path, sizeof(temp_path), "%s/temp_XXXXXX", dir_path);
+    int fd = mkstemp(temp_path);
+    if (fd < 0) {
+        free(full_data);
+        return -1;
+    }
+
+    if (write(fd, full_data, full_len) != (ssize_t)full_len) {
+        close(fd);
+        unlink(temp_path);
+        free(full_data);
+        return -1;
+    }
+
+    // 8. Force data to disk and rename
+    fsync(fd);
+    close(fd);
+
+    if (rename(temp_path, path) != 0) {
+        unlink(temp_path);
+        free(full_data);
+        return -1;
+    }
+
+    free(full_data);
+    return 0; // Success!
 }
+
 
 // Read an object from the store.
 //
@@ -109,7 +175,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 //      and compare to the expected hash (from *id). Return -1 if mismatch.
 //   5. Set *type_out to the parsed ObjectType
 //   6. Allocate a buffer, copy the data portion (after the \0), set *data_out and *len_out
-//
+//my 
 // HINTS - Useful syscalls and functions for this phase:
 //   - object_path        : getting the target file path
 //   - fopen, fread, fseek: reading the file into memory
@@ -122,7 +188,58 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+//TODO implement 
+    // 1. Find the file path
+    char path[512];
+    object_path(id, path, sizeof(path));
+
+    // 2. Open the file
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    // 3. Get file size
+    fseek(f, 0, SEEK_END);
+    size_t file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    // 4. Read everything into a temporary buffer
+    unsigned char *full_data = malloc(file_size);
+    if (fread(full_data, 1, file_size, f) != file_size) {
+        fclose(f);
+        free(full_data);
+        return -1;
+    }
+    fclose(f);
+
+    // 5. Integrity Check: Re-hash the data to make sure it wasn't changed
+    ObjectID actual_id;
+    compute_hash(full_data, file_size, &actual_id);
+    if (memcmp(id->hash, actual_id.hash, HASH_SIZE) != 0) {
+        free(full_data);
+        return -1; // Data is corrupted!
+    }
+
+    // 6. Parse Header: Look for the null terminator '\0'
+    char *null_byte = memchr(full_data, '\0', file_size);
+    if (!null_byte) {
+        free(full_data);
+        return -1;
+    }
+
+    // 7. Identify the type
+    if (strncmp((char*)full_data, "blob", 4) == 0) *type_out = OBJ_BLOB;
+    else if (strncmp((char*)full_data, "tree", 4) == 0) *type_out = OBJ_TREE;
+    else if (strncmp((char*)full_data, "commit", 6) == 0) *type_out = OBJ_COMMIT;
+    else {
+        // Unknown type!
+        free(full_data);
+        return -1;
+    }
+    // 8. Extract only the data part (after the header)
+    *len_out = file_size - (null_byte - (char*)full_data) - 1;
+    *data_out = malloc(*len_out);
+    memcpy(*data_out, null_byte + 1, *len_out);
+
+    free(full_data);
+    return 0;
 }
