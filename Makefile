@@ -1,4 +1,7 @@
-CC = gcc
+all: pes_vcs
+
+pes_vcs: main.o object.o tree.o index.o commit.o
+	gcc -o pes_vcs main.o object.o tree.o index.o commit.o -lssl -lcryptoCC = gcc
 CFLAGS = -Wall -Wextra -O2
 LDFLAGS = -lcrypto
 
