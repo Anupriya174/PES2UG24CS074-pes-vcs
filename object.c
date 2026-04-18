@@ -162,6 +162,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 
     free(full_data);
     return 0; // Success!
+printf("DEBUG: Object successfully written with hash: %s\n", hash_str);
 }
 
 
