@@ -139,37 +139,7 @@ int index_status(const Index *index) {
 //   - hex_to_hash                      : converting the parsed string to ObjectID
 //
 // Returns 0 on success, -1 on error.
-int index_load(Index *index) {
-    FILE *f = fopen(".pes/index", "r");
-    if (!f) {
-        index->count = 0;
-        return 0;
-    }
 
-    index->count = 0;
-
-    while (1) {
-        IndexEntry e;
-        char hash_hex[65];
-
-        int ret = fscanf(f, "%o %64s %ld %u %s",
-                         &e.mode,
-                         hash_hex,
-                         &e.mtime_sec,
-                         &e.size,
-                         e.path);
-
-        if (ret != 5)
-            break;
-
-        hex_to_hash(hash_hex, &e.hash);
-
-        index->entries[index->count++] = e;
-    }
-
-    fclose(f);
-    return 0;
-}
 
 
 // Save the index to .pes/index atomically.
@@ -194,4 +164,63 @@ int index_load(Index *index) {
 // Returns 0 on success, -1 on error.
 
 
+int index_add(Index *index, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        perror("fopen");
+        return -1;
+    }
 
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+
+    char *data = malloc(size);
+    if (!data) {
+        fclose(f);
+        return -1;
+    }
+
+    if (fread(data, 1, size, f) != (size_t)size) {
+        perror("fread");
+        free(data);
+        fclose(f);
+        return -1;
+    }
+
+    fclose(f);
+
+    ObjectID hash;
+    if (object_write(OBJ_BLOB, data, size, &hash) != 0) {
+        free(data);
+        return -1;
+    }
+
+    free(data);
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        perror("stat");
+        return -1;
+    }
+
+    IndexEntry *e = index_find(index, path);
+
+    if (e) {
+        e->hash = hash;
+        e->mtime_sec = st.st_mtime;
+        e->size = st.st_size;
+        e->mode = st.st_mode;
+    } else {
+        IndexEntry new_entry;
+        new_entry.hash = hash;
+        new_entry.mtime_sec = st.st_mtime;
+        new_entry.size = st.st_size;
+        new_entry.mode = st.st_mode;
+        strcpy(new_entry.path, path);
+
+        index->entries[index->count++] = new_entry;
+    }
+
+    return index_save(index);
+}
