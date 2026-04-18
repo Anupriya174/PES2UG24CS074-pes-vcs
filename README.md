@@ -5,7 +5,9 @@
 **Platform:** Ubuntu 22.04
 
 ---
-
+## How to Build
+Run `make` to compile the project.
+Run `./pes_vcs` to execute the Version Control System.
 ## Getting Started
 
 ### Prerequisites
