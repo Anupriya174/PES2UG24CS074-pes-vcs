@@ -4,6 +4,7 @@
 
 #ifndef PES_H
 #define PES_H
+#define SHA256_BLOCK_SIZE 32
 
 #include <stdio.h>
 #include <stdint.h>
