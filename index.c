@@ -171,6 +171,7 @@ int index_load(Index *index) {
     return 0;
 }
 
+
 // Save the index to .pes/index atomically.
 //
 // HINTS - Useful functions and syscalls:
@@ -182,50 +183,6 @@ int index_load(Index *index) {
 //
 // Returns 0 on success, -1 on error.
 
-int cmp_entries(const void *a, const void *b) {
-    const IndexEntry *ea = a;
-    const IndexEntry *eb = b;
-    return strcmp(ea->path, eb->path);
-}
-
-
-int index_save(const Index *index) {
-    FILE *f = fopen(".pes/index.tmp", "w");
-    if (!f) {
-        perror("fopen");
-        return -1;
-    }
-
-    IndexEntry temp[index->count];
-    for (int i = 0; i < index->count; i++) {
-        temp[i] = index->entries[i];
-    }
-
-    qsort(temp, index->count, sizeof(IndexEntry), compare_index_entries);
-
-    for (int i = 0; i < index->count; i++) {
-        char hash_hex[65];
-        hash_to_hex(&temp[i].hash, hash_hex);
-
-        fprintf(f, "%o %s %ld %u %s\n",
-                temp[i].mode,
-                hash_hex,
-                temp[i].mtime_sec,
-                temp[i].size,
-                temp[i].path);
-    }
-
-    fflush(f);
-    fsync(fileno(f));
-    fclose(f);
-
-    if (rename(".pes/index.tmp", ".pes/index") != 0) {
-        perror("rename");
-        return -1;
-    }
-
-    return 0;
-}
 // Stage a file for the next commit.
 //
 // HINTS - Useful functions and syscalls:
@@ -237,63 +194,4 @@ int index_save(const Index *index) {
 // Returns 0 on success, -1 on error.
 
 
-int index_add(Index *index, const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        perror("fopen");
-        return -1;
-    }
 
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    rewind(f);
-
-    char *data = malloc(size);
-    if (!data) {
-        fclose(f);
-        return -1;
-    }
-
-    if (fread(data, 1, size, f) != (size_t)size) {
-        perror("fread");
-        free(data);
-        fclose(f);
-        return -1;
-    }
-
-    fclose(f);
-
-    ObjectID hash;
-    if (object_write(OBJ_BLOB, data, size, &hash) != 0) {
-        free(data);
-        return -1;
-    }
-
-    free(data);
-
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        perror("stat");
-        return -1;
-    }
-
-    IndexEntry *e = index_find(index, path);
-
-    if (e) {
-        e->hash = hash;
-        e->mtime_sec = st.st_mtime;
-        e->size = st.st_size;
-        e->mode = st.st_mode;
-    } else {
-        IndexEntry new_entry;
-        new_entry.hash = hash;
-        new_entry.mtime_sec = st.st_mtime;
-        new_entry.size = st.st_size;
-        new_entry.mode = st.st_mode;
-        strcpy(new_entry.path, path);
-
-        index->entries[index->count++] = new_entry;
-    }
-
-    return index_save(index);
-}
