@@ -194,8 +194,64 @@ int head_update(const ObjectID *new_commit) {
 //
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out) {
-    // TODO: Implement commit creation
-    // (See Lab Appendix for logical steps)
-    (void)message; (void)commit_id_out;
-    return -1;
+    // 1. Create tree from index
+    ObjectID tree_id;
+
+    if (tree_from_index(&tree_id) != 0) {
+        fprintf(stderr, "error: tree creation failed\n");
+        return -1;
+    }
+
+    // 2. Get parent commit (if exists)
+    ObjectID parent_id;
+    int has_parent = (head_read(&parent_id) == 0);
+
+    // 3. Fill commit struct
+    Commit c;
+    memset(&c, 0, sizeof(c));
+
+    c.tree = tree_id;
+    c.has_parent = has_parent;
+
+    if (has_parent) {
+        c.parent = parent_id;
+    }
+
+    snprintf(c.author, sizeof(c.author), "%s", pes_author());
+    c.timestamp = (uint64_t)time(NULL);
+
+    snprintf(c.message, sizeof(c.message), "%s", message);
+
+    // 4. Serialize commit
+    void *data;
+    size_t len;
+
+    if (commit_serialize(&c, &data, &len) != 0) {
+        fprintf(stderr, "error: commit serialize failed\n");
+        return -1;
+    }
+
+    // 5. Write commit object
+    ObjectID commit_id;
+
+    if (object_write(OBJ_COMMIT, data, len, &commit_id) != 0) {
+        free(data);
+        fprintf(stderr, "error: commit object write failed\n");
+        return -1;
+    }
+
+    free(data);
+
+    // 6. Update HEAD
+    if (head_update(&commit_id) != 0) {
+        fprintf(stderr, "error: head update failed\n");
+        return -1;
+    }
+
+    // 7. Return commit id
+    if (commit_id_out) {
+        *commit_id_out = commit_id;
+    }
+
+    return 0;
 }
